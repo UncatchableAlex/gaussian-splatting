@@ -22,6 +22,8 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import futhark_server as fs
+import numpy as np
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -40,7 +42,12 @@ try:
 except:
     SPARSE_ADAM_AVAILABLE = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def to_numpy(v):
+    if isinstance(v, torch.Tensor):
+        return v.detach().cpu().numpy().astype(np.float32)
+    return np.array(v).astype(np.float32)
+
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, futhark):
 
     if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
@@ -70,6 +77,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+
+    server = fs.Server('./submodules/futhark-3dgs/rasterizer') if futhark else None
+
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -108,7 +118,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE, futhark_server=server)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         if viewpoint_cam.alpha_mask is not None:
@@ -117,6 +127,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
@@ -124,6 +135,57 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = ssim(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+
+        # Prepare inputs for Futhark grad (convert PyTorch tensors to NumPy/Futhark-compatible format)
+        tanfovx = np.tan(viewpoint_cam.FoVx * 0.5)
+        tanfovy = np.tan(viewpoint_cam.FoVy * 0.5)
+        inputs =   {
+            "background" :  to_numpy(bg),  # [3]
+            "means3D" :  to_numpy(gaussians.get_xyz),  # [n, 3]
+            "colors" :  to_numpy(render_pkg['colors_precomp']),  
+            "opacities" :  to_numpy(gaussians.get_opacity),  # [n, 1]
+            "scales" :  to_numpy(gaussians.get_scaling),  # [n, 3]
+            "rotations" :  to_numpy(gaussians.get_rotation),  # [n, 4]
+            "view_matrix" :  to_numpy(viewpoint_cam.world_view_transform).T,
+            "proj_matrix" :  to_numpy(viewpoint_cam.full_proj_transform).T,
+            "tan_fovx" :  np.float32(tanfovx),
+            "tan_fovy" :  np.float32(tanfovy),
+            "image_height" :  np.int64(gt_image.shape[1]),
+            "image_width" :  np.int64(gt_image.shape[2]),
+            "ssim_kernel_size" :  np.int32(11),
+            "ssim_kernel_sigma" :  np.float32(1.5),
+            "gt_image" :  to_numpy(gt_image).transpose(1,2,0),  # [H, W, 3]
+            "lambda" :  np.float32(opt.lambda_dssim)
+        }
+
+        # provide all inputs to the server
+        for name, value in inputs.items():
+            print(name, value.shape if isinstance(value, np.ndarray) else value)
+            server.put_value(name, value)
+
+        # rasterize with the futhark server
+        server.cmd_call(
+            "grad",
+            'dmeans', 
+            'dcolors', 
+            'dopacities', 
+            'dscales', 
+            'drotations', 
+            'loss',
+            *inputs.keys())
+
+        # free everything
+        for name in inputs.keys():
+            server.cmd_free(name)
+        
+        gaussians._xyz.grad = torch.from_numpy(server.get_value('dmeans')).cuda()
+        render_pkg['colors_precomp'].grad = torch.from_numpy(server.get_value('dcolors')).cuda()
+        gaussians._opacity.grad = torch.from_numpy(server.get_value('dopacities')).cuda()
+        gaussians._scaling.grad = torch.from_numpy(server.get_value('dscales')).cuda()
+        gaussians._rotation.grad = torch.from_numpy(server.get_value('drotations')).cuda()
+        fut_loss = server.get_value('loss')
+
+        print(f'COMPARE LOSSES: {fut_loss} {loss}')
 
         # Depth regularization
         Ll1depth_pure = 0.0
@@ -139,7 +201,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             Ll1depth = 0
 
-        loss.backward()
+       # loss.backward()
 
         iter_end.record()
 
@@ -267,6 +329,7 @@ if __name__ == "__main__":
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--futhark", action="store_true", help="Use Alex's custom Futhark rasterizer")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -279,7 +342,7 @@ if __name__ == "__main__":
     if not args.disable_viewer:
         network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.futhark)
 
     # All done
     print("\nTraining complete.")

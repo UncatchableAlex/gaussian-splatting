@@ -18,3 +18,6 @@ dependencies:
     - submodules/fused-ssim
     - opencv-python
     - joblib
+    - git+https://github.com/uncatchablealex/futhark-server-python.git@main
+  - futhark:
+    - cuda --server submodules/futhark-3dgs/rasterizer.fut

@@ -11,3 +11,6 @@
 [submodule "submodules/fused-ssim"]
 	path = submodules/fused-ssim
 	url = https://github.com/rahul-goel/fused-ssim.git
+[submodule "submodules/futhark-3dgs"]
+	path = submodules/futhark-3dgs
+	url = git@github.com:UncatchableAlex/futhark-3dgs.git
