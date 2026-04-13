@@ -78,7 +78,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
-    server = fs.Server('./submodules/futhark-3dgs/rasterizer') if futhark else None
+    server = fs.Server('./submodules/futhark-3dgs/futhark_rasterizer/rasterizer') if futhark else None
 
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
@@ -118,7 +118,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE, futhark_server=server)
+        gt_image = viewpoint_cam.original_image.cuda()
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE, futhark_server=server, gt_image=gt_image)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         if viewpoint_cam.alpha_mask is not None:
@@ -126,67 +128,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image *= alpha_mask
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
-
-        Ll1 = l1_loss(image, gt_image)
-        if FUSED_SSIM_AVAILABLE:
-            ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+        if futhark:
+            loss = render_pkg['loss']
+            
+            # we actually calculate this in futhark too. We could move that value through the call stack if we weren't lazy
+            Ll1 = l1_loss(image, gt_image)
         else:
-            ssim_value = ssim(image, gt_image)
+            Ll1 = l1_loss(image, gt_image)
+            if FUSED_SSIM_AVAILABLE:
+                ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+            else:
+                ssim_value = ssim(image, gt_image)
 
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+             
+       # print(f'COMPARE LOSSES: {fut_loss} {loss}')
 
-        # Prepare inputs for Futhark grad (convert PyTorch tensors to NumPy/Futhark-compatible format)
-        tanfovx = np.tan(viewpoint_cam.FoVx * 0.5)
-        tanfovy = np.tan(viewpoint_cam.FoVy * 0.5)
-        inputs =   {
-            "background" :  to_numpy(bg),  # [3]
-            "means3D" :  to_numpy(gaussians.get_xyz),  # [n, 3]
-            "colors" :  to_numpy(render_pkg['colors_precomp']),  
-            "opacities" :  to_numpy(gaussians.get_opacity),  # [n, 1]
-            "scales" :  to_numpy(gaussians.get_scaling),  # [n, 3]
-            "rotations" :  to_numpy(gaussians.get_rotation),  # [n, 4]
-            "view_matrix" :  to_numpy(viewpoint_cam.world_view_transform).T,
-            "proj_matrix" :  to_numpy(viewpoint_cam.full_proj_transform).T,
-            "tan_fovx" :  np.float32(tanfovx),
-            "tan_fovy" :  np.float32(tanfovy),
-            "image_height" :  np.int64(gt_image.shape[1]),
-            "image_width" :  np.int64(gt_image.shape[2]),
-            "ssim_kernel_size" :  np.int32(11),
-            "ssim_kernel_sigma" :  np.float32(1.5),
-            "gt_image" :  to_numpy(gt_image).transpose(1,2,0),  # [H, W, 3]
-            "lambda" :  np.float32(opt.lambda_dssim)
-        }
-
-        # provide all inputs to the server
-        for name, value in inputs.items():
-            print(name, value.shape if isinstance(value, np.ndarray) else value)
-            server.put_value(name, value)
-
-        # rasterize with the futhark server
-        server.cmd_call(
-            "grad",
-            'dmeans', 
-            'dcolors', 
-            'dopacities', 
-            'dscales', 
-            'drotations', 
-            'loss',
-            *inputs.keys())
-
-        # free everything
-        for name in inputs.keys():
-            server.cmd_free(name)
         
-        gaussians._xyz.grad = torch.from_numpy(server.get_value('dmeans')).cuda()
-        render_pkg['colors_precomp'].grad = torch.from_numpy(server.get_value('dcolors')).cuda()
-        gaussians._opacity.grad = torch.from_numpy(server.get_value('dopacities')).cuda()
-        gaussians._scaling.grad = torch.from_numpy(server.get_value('dscales')).cuda()
-        gaussians._rotation.grad = torch.from_numpy(server.get_value('drotations')).cuda()
-        fut_loss = server.get_value('loss')
-
-        print(f'COMPARE LOSSES: {fut_loss} {loss}')
-
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
@@ -201,7 +159,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             Ll1depth = 0
 
-       # loss.backward()
+        loss.backward()
 
         iter_end.record()
 
@@ -226,6 +184,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:

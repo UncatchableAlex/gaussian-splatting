@@ -12,10 +12,11 @@
 import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from futhark_3dgs import GaussianRasterizerFuthark, GaussianRasterizationSettingsFuthark
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False, futhark_server=None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False, futhark_server=None, gt_image=None):
     """
     Render the scene. 
     
@@ -33,24 +34,42 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
-        prefiltered=False,
-        debug=pipe.debug,
-        antialiasing=pipe.antialiasing,
-        futhark_server=futhark_server
-    )
+    if futhark_server: 
+        raster_settings = GaussianRasterizationSettingsFuthark(
+            image_height=int(viewpoint_camera.image_height),
+            image_width=int(viewpoint_camera.image_width),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            bg=bg_color,
+            scale_modifier=scaling_modifier,
+            viewmatrix=viewpoint_camera.world_view_transform,
+            projmatrix=viewpoint_camera.full_proj_transform,
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center,
+            prefiltered=False,
+            debug=pipe.debug,
+            antialiasing=pipe.antialiasing,
+            futhark_server=futhark_server,
+            gt_image=gt_image
+        )
+    else:
+        raster_settings = GaussianRasterizationSettings(
+            image_height=int(viewpoint_camera.image_height),
+            image_width=int(viewpoint_camera.image_width),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            bg=bg_color,
+            scale_modifier=scaling_modifier,
+            viewmatrix=viewpoint_camera.world_view_transform,
+            projmatrix=viewpoint_camera.full_proj_transform,
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center,
+            prefiltered=False,
+            debug=pipe.debug,
+            antialiasing=pipe.antialiasing
+        )
 
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings) 
+    rasterizer = GaussianRasterizerFuthark(raster_settings=raster_settings) if futhark_server else GaussianRasterizer(raster_settings=raster_settings) 
 
     means3D = pc.get_xyz
     means2D = screenspace_points
@@ -88,7 +107,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    if separate_sh:
+    if futhark_server:
+        rendered_image, radii, depth_image, loss = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = colors_precomp,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp,
+        )
+    elif separate_sh:
         rendered_image, radii, depth_image = rasterizer(
             means3D = means3D,
             means2D = means2D,
@@ -99,6 +129,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
+        loss = None
     else:
         rendered_image, radii, depth_image = rasterizer(
             means3D = means3D,
@@ -109,6 +140,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
+        loss = None
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
@@ -124,7 +156,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "visibility_filter" : (radii > 0).nonzero(),
         "radii": radii,
         "depth" : depth_image,
-        "colors_precomp" : colors_precomp
+        "colors_precomp" : colors_precomp,
+        'loss': loss
         }
     
     return out
