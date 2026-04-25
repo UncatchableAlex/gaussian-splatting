@@ -24,6 +24,7 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import futhark_server as fs
 import numpy as np
+from futhark_3dgs import Futhark_Rasterization_Server
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -46,6 +47,11 @@ def to_numpy(v):
     if isinstance(v, torch.Tensor):
         return v.detach().cpu().numpy().astype(np.float32)
     return np.array(v).astype(np.float32)
+
+def cosine_similarity(a, b):
+    a_flat = a.flatten()
+    b_flat = b.flatten()
+    return np.dot(a_flat, b_flat) / (np.linalg.norm(a_flat) * np.linalg.norm(b_flat))
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, futhark):
 
@@ -78,7 +84,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
 
-    server = fs.Server('./submodules/futhark-3dgs/futhark_rasterizer/rasterizer') if futhark else None
+    server = Futhark_Rasterization_Server() if futhark else None
 
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
@@ -119,7 +125,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         gt_image = viewpoint_cam.original_image.cuda()
-
+        
+        print('rendering futhark')
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE, futhark_server=server, gt_image=gt_image)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -142,8 +149,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
              
-       # print(f'COMPARE LOSSES: {fut_loss} {loss}')
-
         
         # Depth regularization
         Ll1depth_pure = 0.0
@@ -158,9 +163,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1depth = Ll1depth.item()
         else:
             Ll1depth = 0
-
+            
         loss.backward()
-
         iter_end.record()
 
         with torch.no_grad():
