@@ -9,7 +9,8 @@ from utils.sh_utils import eval_sh
 import json
 
 
-ply_path = './output/be9fc165-5/point_cloud/iteration_10000/point_cloud.ply'
+ply_path = './output/071d7ae9-f/point_cloud/iteration_5000/point_cloud.ply'
+output_dir = "/home/mjk711/gaussian-splatting/scene_captures/output.mp4"
 rasterizer_inps = './submodules/futhark-3dgs/rasterizer_inps'
 
 # the number of frames to render
@@ -119,14 +120,14 @@ ffmpeg_cmd = [
     "-an",
     "-vcodec", "libx264",
     "-pix_fmt", "yuv420p",
-    "output.mp4"
+    output_dir
 ]
 
 ffmpeg_proc = subprocess.Popen(
     ffmpeg_cmd, 
     stdin=subprocess.PIPE,
-    stdout=subprocess.DEVNULL, # silence annoying ffmpeg stdout/stderr chatter
-    stderr=subprocess.DEVNULL)
+    stdout=subprocess.PIPE, # silence annoying ffmpeg stdout/stderr chatter
+    stderr=None)
 
 i = 0
 pbar = tqdm(total=frames)

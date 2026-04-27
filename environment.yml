@@ -19,5 +19,6 @@ dependencies:
     - opencv-python
     - joblib
     - git+https://github.com/uncatchablealex/futhark-server-python.git@main
+    - -e submodules/futhark-3dgs/futhark_3dgs
   - futhark:
-    - cuda --server submodules/futhark-3dgs/rasterizer.fut
+    - cuda --server submodules/futhark-3dgs/futhark-rasterizer/rasterizer.fut
