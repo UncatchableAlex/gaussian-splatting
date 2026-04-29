@@ -8,7 +8,6 @@ tensorboard_3d
 screenshots
 tandt
 futhark-3dgs
-submodules
 train.slurm
 logs
 *.mp4
