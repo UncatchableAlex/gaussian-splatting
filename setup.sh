@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e  # exit on any error
 
+# load the conda library
+module load miniconda
+
 # create and activate the conda environment
 conda env create -f environment.yml
 conda activate gtest
@@ -24,6 +27,6 @@ pip install \
     -e submodules/futhark-3dgs
 
 # 4. build the Futhark rasterizer. As far as I know, this versions of futhark past futhark-0.25.32 don't work
-cd submodules/futhark-3dgs/futhark-rasterizer
+cd submodules/futhark-3dgs/futhark_rasterizer
 futhark pkg sync
 futhark cuda --server rasterizer.fut

@@ -37,7 +37,8 @@ Abstract: *Radiance Field methods have recently revolutionized novel-view synthe
   ```
 - run the setup.sh bash script
 ```
-./setup.sh
+chmod +x ./setup.sh
+source ./setup.sh
 ```
 
 
