@@ -12,5 +12,4 @@ train.slurm
 logs
 *.mp4
 *.png
-*.sh
 *.txt
