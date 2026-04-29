@@ -1,4 +1,4 @@
-name: gaussian_splatting
+name: gtest
 channels:
   - pytorch
   - conda-forge
@@ -12,13 +12,14 @@ dependencies:
   - torchaudio=0.12.1
   - torchvision=0.13.1
   - tqdm
-  - pip:
-    - submodules/diff-gaussian-rasterization
-    - submodules/simple-knn
-    - submodules/fused-ssim
-    - opencv-python
-    - joblib
-    - git+https://github.com/uncatchablealex/futhark-server-python.git@main
-    - -e submodules/futhark-3dgs/futhark_3dgs
   - futhark:
     - cuda --server submodules/futhark-3dgs/futhark-rasterizer/rasterizer.fut
+
+# For hendrix cluster run:
+#
+# conda env remove --name gtest
+# conda env create --file environment.yml
+# conda activate gtest
+# export CUDA_HOME=$CONDA_PREFIX
+# export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+# pip install submodules/diff-gaussian-rasterization submodules/simple-knn submodules/fused-ssim opencv-python joblib submodules/futhark-server-python -e submodules/futhark-3dgs

@@ -14,3 +14,6 @@
 [submodule "submodules/futhark-3dgs"]
 	path = submodules/futhark-3dgs
 	url = git@github.com:UncatchableAlex/futhark-3dgs.git
+[submodule "submodules/futhark-server-python"]
+	path = submodules/futhark-server-python
+	url = git@github.com:UncatchableAlex/futhark-server-python.git
