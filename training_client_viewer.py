@@ -37,7 +37,7 @@ from futhark_3dgs.util import look_at, getProjectionMatrix
 HOST = "127.0.0.1"
 PORT = 6009
 
-# ── camera defaults (edit to taste) ─────────────────────────────────────────
+# ── camera defaults  ─────────────────────────────────────────
 WIDTH  = 980
 HEIGHT = 545
 FOVX   = 1.4028140929797817

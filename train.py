@@ -25,6 +25,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import futhark_server as fs
 import numpy as np
 from futhark_3dgs import Futhark_Rasterization_Server
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
