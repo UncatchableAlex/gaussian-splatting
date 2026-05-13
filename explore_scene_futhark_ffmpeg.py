@@ -9,8 +9,8 @@ from utils.sh_utils import eval_sh
 import json
 import argparse
 
-PLY_PATH = './output/_futhark20000_8k/point_cloud/iteration_20000/point_cloud.ply'
-OUTPUT_DIR = "/home/mjk711/gaussian-splatting/scene_captures/futhark20000_low.mp4"
+PLY_PATH = './output/_futhark30000_8k/point_cloud/iteration_20000/point_cloud.ply'
+OUTPUT_DIR = "/home/mjk711/gaussian-splatting/scene_captures/futhark30000.mp4"
 
 # ── camera defaults  ─────────────────────────────────────────
 WIDTH  = 980
@@ -63,7 +63,7 @@ def make_video(args):
     dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
     sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
     colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-    target  = np.array([0.0, args.elevation, 0.0], dtype=np.float32)
+    target  = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
     # prep  inputs as numpy arrays with correct dtypes
     inputs = {
@@ -179,3 +179,4 @@ if __name__ == "__main__":
     main()
 
 # srun --partition=gpu --gres=gpu:titanrtx:1 --time=01:00:00 --mem=12G --cpus-per-task=2 --pty bash
+# python explore_scene_futhark_ffmpeg.py --input ./output/_futhark30000_8k/point_cloud/iteration_30000/point_cloud.ply --output /home/mjk711/gaussian-splatting/scene_captures/futhark30000.mp4

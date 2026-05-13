@@ -10,7 +10,7 @@
 # Resource requests
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=08:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=12G
 #SBATCH --cpus-per-task=3
 #SBATCH --exclude=hendrixgpu18fl,hendrixgpu09fl,hendrixgpu10fl,hendrixgpu17fl
@@ -22,13 +22,13 @@ nvidia-smi
 # start training
 /home/mjk711/.conda/envs/gaussian_splatting/bin/python train.py \
  --convert_SHs_python \
- --iterations 20000 \
- --checkpoint_iterations 5000 10000 15000 20000 \
- --save_iterations 5000 10000 15000 20000 \
- --test_iterations 200 7000 20000 \
+ --iterations 30000 \
+ --checkpoint_iterations 30000 \
+ --save_iterations 30000 \
+ --test_iterations 25000 30000 \
  -s ~/gaussian-splatting/tandt/train \
-  --futhark \
-  #--start_checkpoint /home/mjk711/gaussian-splatting/output/071d7ae9-f/chkpnt5000.pth\
+ --futhark \
+ --start_checkpoint /home/mjk711/gaussian-splatting/output/_futhark20000_8k/chkpnt20000.pth
 #  & \
 #  /home/mjk711/.conda/envs/gaussian_splatting/bin/python training_client_viewer.py \
 #  --mode video \
